@@ -13,6 +13,7 @@ import { EmailDialog } from './components/EmailDialog';
 import {
   Avatar,
   Brandmark,
+  IconAlert,
   IconHome,
   IconList,
   IconLogout,
@@ -32,7 +33,8 @@ const PAGE_META: Record<Tab, { title: string; sub: string }> = {
 
 export function App() {
   const store = useStore();
-  const { user, ready, connected, tasks, members, toasts, dismissToast, theme, toggleTheme, signOut } = store;
+  const { user, ready, connected, storage, tasks, members, toasts, dismissToast, theme, toggleTheme, signOut } =
+    store;
 
   const [tab, setTab] = useState<Tab>('overview');
   const [filter, setFilter] = useState<TaskFilter>('open');
@@ -153,6 +155,20 @@ export function App() {
         </header>
 
         <div className="content">
+          {storage && !storage.durable ? (
+            <div className="banner" role="alert">
+              <IconAlert size={16} />
+              <div>
+                <strong>This deployment cannot keep your data.</strong>
+                <p>
+                  It is running somewhere with temporary storage, so tasks, team members and replies vanish whenever
+                  the server recycles. Fine for a look around, not for real work. Connect a database or host it on a
+                  machine with a real disk. The README covers both.
+                </p>
+              </div>
+            </div>
+          ) : null}
+
           {tab === 'overview' ? <Overview goToTasks={goToTasks} onOpenTask={openTaskFrom} /> : null}
           {tab === 'tasks' ? (
             <TasksView

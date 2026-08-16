@@ -9,8 +9,19 @@ import {
   type ReactNode,
 } from 'react';
 
-import { api, session } from './api';
-import type { ActivityEvent, EmailDraft, Member, Snapshot, Task, User } from './types';
+import { ApiError, api, session } from './api';
+import type { ActivityEvent, EmailDraft, Member, Snapshot, StorageInfo, Task, User } from './types';
+
+/**
+ * Server-Sent Events give instant updates, but they cannot be relied on
+ * everywhere: a serverless host kills the connection at its function timeout,
+ * and a reply handled by one instance never reaches a dashboard held open by
+ * another. Polling alongside the stream keeps the board correct on any host.
+ */
+const POLL_MS = 8000;
+
+/** The statuses that mean a team member actually answered the email. */
+const ANSWERED = new Set(['ready', 'need_time', 'escalated']);
 
 type ToastKind = 'ok' | 'err' | 'info';
 
@@ -25,6 +36,7 @@ interface StoreValue extends Snapshot {
   user: User | null;
   ready: boolean;
   connected: boolean;
+  storage: StorageInfo | null;
   toasts: Toast[];
   theme: 'light' | 'dark';
   toggleTheme: () => void;
@@ -58,6 +70,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [events, setEvents] = useState<ActivityEvent[]>([]);
   const [ready, setReady] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [storage, setStorage] = useState<StorageInfo | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [theme, setTheme] = useState<'light' | 'dark'>(readTheme);
 
@@ -80,11 +93,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setToasts((current) => current.filter((t) => t.id !== id));
   }, []);
 
-  const applySnapshot = useCallback((snapshot: Snapshot) => {
-    setMembers(snapshot.members);
-    setTasks(snapshot.tasks);
-    setEvents(snapshot.events);
-  }, []);
+  /**
+   * The single path a snapshot takes into the UI, whether it arrived over the
+   * stream, from a poll, or at sign-in. Announcing here rather than at the
+   * call sites means an answer raises exactly one toast no matter which
+   * transport noticed it first.
+   */
+  const ingest = useCallback(
+    (snapshot: Snapshot, { announce = true }: { announce?: boolean } = {}) => {
+      if (announce) {
+        for (const task of snapshot.tasks) {
+          const before = lastStatuses.current.get(task.id);
+          if (before && before !== task.status && ANSWERED.has(task.status)) {
+            const who = snapshot.members.find((m) => m.id === task.assigneeId)?.name ?? 'Someone';
+            const said =
+              task.status === 'ready' ? 'Task Ready' : task.status === 'need_time' ? 'Need Time' : 'Escalation';
+            notify(`${who}: ${said}`, task.title, task.status === 'escalated' ? 'err' : 'ok');
+          }
+        }
+      }
+      lastStatuses.current = new Map(snapshot.tasks.map((t) => [t.id, t.status]));
+      setMembers(snapshot.members);
+      setTasks(snapshot.tasks);
+      setEvents(snapshot.events);
+    },
+    [notify],
+  );
 
   const fail = useCallback(
     (err: unknown) => {
@@ -107,11 +141,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       .bootstrap()
       .then((data) => {
         setUser(data.user);
-        applySnapshot(data);
+        setStorage(data.storage ?? null);
+        ingest(data, { announce: false });
       })
       .catch(() => session.clear())
       .finally(() => setReady(true));
-  }, [applySnapshot]);
+  }, [ingest]);
 
   /* --------------------------------------- live updates from email replies */
 
@@ -127,27 +162,46 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     source.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data) as Snapshot & { type: string };
-        if (payload.type !== 'sync') return;
-
-        // Announce answers that arrived while the user was looking elsewhere.
-        for (const task of payload.tasks) {
-          const before = lastStatuses.current.get(task.id);
-          if (before && before !== task.status && ['ready', 'need_time', 'escalated'].includes(task.status)) {
-            const who = payload.members.find((m) => m.id === task.assigneeId)?.name ?? 'Someone';
-            const said =
-              task.status === 'ready' ? 'Task Ready' : task.status === 'need_time' ? 'Need Time' : 'Escalation';
-            notify(`${who}: ${said}`, task.title, task.status === 'escalated' ? 'err' : 'ok');
-          }
-        }
-        lastStatuses.current = new Map(payload.tasks.map((t) => [t.id, t.status]));
-        applySnapshot(payload);
+        if (payload.type === 'sync') ingest(payload);
       } catch {
         /* a malformed frame is not worth tearing the stream down for */
       }
     };
 
     return () => source.close();
-  }, [user, applySnapshot, notify]);
+  }, [user, ingest]);
+
+  /* ------------------------- polling, for hosts where the stream cannot hold */
+
+  useEffect(() => {
+    if (!user) return;
+
+    let stopped = false;
+    const tick = async () => {
+      // Nothing to refresh for a hidden tab, and it keeps idle hosts quiet.
+      if (document.hidden || stopped) return;
+      try {
+        const data = await api.bootstrap();
+        if (!stopped) ingest(data);
+      } catch (err) {
+        // A dead session would otherwise retry forever; anything else (the
+        // server restarting, a flaky network) is worth another tick.
+        if (err instanceof ApiError && err.status === 401) {
+          stopped = true;
+          session.clear();
+          setUser(null);
+        }
+      }
+    };
+
+    const timer = window.setInterval(tick, POLL_MS);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', tick);
+    };
+  }, [user, ingest]);
 
   /* ---------------------------------------------------------------- actions */
 
@@ -159,6 +213,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       events,
       ready,
       connected,
+      storage,
       toasts,
       theme,
       notify,
@@ -170,8 +225,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const data = await api.signIn(input);
           session.set(data.user.id);
           setUser(data.user);
-          applySnapshot(data);
-          lastStatuses.current = new Map(data.tasks.map((t) => [t.id, t.status]));
+          setStorage(data.storage ?? null);
+          ingest(data, { announce: false });
         } catch (err) {
           fail(err);
         }
@@ -245,7 +300,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
       },
     }),
-    [user, members, tasks, events, ready, connected, toasts, theme, notify, dismissToast, applySnapshot, fail],
+    [user, members, tasks, events, ready, connected, storage, toasts, theme, notify, dismissToast, ingest, fail],
   );
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;

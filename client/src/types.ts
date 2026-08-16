@@ -54,6 +54,12 @@ export interface ActivityEvent {
   createdAt: string;
 }
 
+/** Whether the server it is talking to can actually keep the data. */
+export interface StorageInfo {
+  durable: boolean;
+  dir: string;
+}
+
 export interface Snapshot {
   members: Member[];
   tasks: Task[];

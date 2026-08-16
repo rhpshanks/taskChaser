@@ -11,8 +11,22 @@ import { ALL_STATUSES, PRIORITIES, RESPONSE_ACTIONS, STATUS, deriveStatus } from
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 4000);
-const DATA_DIR = path.resolve(here, '..', process.env.DATA_DIR ?? './data');
 const CLIENT_DIST = path.resolve(here, '../../client/dist');
+
+/**
+ * On Vercel (and any Lambda-style host) the deployment is read-only apart from
+ * `/tmp`, and that `/tmp` belongs to one instance and is wiped when it recycles.
+ * Falling back to it keeps the app booting instead of crashing on first write,
+ * but the data is NOT durable, so the client is told to warn about it.
+ */
+const SERVERLESS = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+const DATA_DIR = process.env.DATA_DIR
+  ? path.resolve(process.cwd(), process.env.DATA_DIR)
+  : SERVERLESS
+    ? '/tmp/taskchaser'
+    : path.resolve(here, '../data');
+
+const STORAGE = { durable: !SERVERLESS || Boolean(process.env.DATA_DIR), dir: DATA_DIR };
 
 const store = createStore({ dataDir: DATA_DIR });
 const app = express();
@@ -20,6 +34,11 @@ const app = express();
 app.use(express.json({ limit: '256kb' }));
 app.use(express.urlencoded({ extended: false, limit: '256kb' }));
 app.disable('x-powered-by');
+
+// Behind a proxy (Vercel, any reverse proxy) req.protocol reads as plain http
+// unless X-Forwarded-Proto is trusted, which would put http:// links into the
+// email for an https-only deployment.
+if (SERVERLESS || process.env.TRUST_PROXY === '1') app.set('trust proxy', true);
 
 // The Vite dev server runs on another origin; in production the client is
 // served from here and this is a no-op.
@@ -69,9 +88,17 @@ function isoDate(value, field = 'Due date') {
   return date.toISOString();
 }
 
+/**
+ * The address the three email links point at. People click these hours or days
+ * later, so it has to be stable: Vercel's per-deployment URL changes on every
+ * push, which would quietly break every link already sitting in an inbox.
+ * Hence the production domain is preferred over whatever host served this call.
+ */
 function publicBaseUrl(req) {
   if (process.env.PUBLIC_BASE_URL) return process.env.PUBLIC_BASE_URL.replace(/\/+$/, '');
-  return `${req.protocol}://${req.get('host')}`;
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
+  const host = req.get('x-forwarded-host') || req.get('host');
+  return `${req.protocol}://${host}`;
 }
 
 /* ------------------------------------------------- live dashboard updates */
@@ -158,12 +185,12 @@ app.post('/api/session', (req, res) => {
     store.data.users.push(user);
   }
   store.save();
-  res.json({ user, ...snapshot(user.id) });
+  res.json({ user, storage: STORAGE, ...snapshot(user.id) });
 });
 
 app.get('/api/bootstrap', (req, res) => {
   const user = requireUser(req);
-  res.json({ user, ...snapshot(user.id) });
+  res.json({ user, storage: STORAGE, ...snapshot(user.id) });
 });
 
 /* ---------------------------------------------------------------- members */
@@ -499,7 +526,9 @@ app.post('/r/:token/:action/note', (req, res) => {
 
 /* --------------------------------------------------------- static + errors */
 
-app.get('/api/health', (_req, res) => res.json({ ok: true, at: now() }));
+app.get('/api/health', (_req, res) =>
+  res.json({ ok: true, at: now(), serverless: SERVERLESS, storage: STORAGE }),
+);
 
 if (fs.existsSync(CLIENT_DIST)) {
   app.use(express.static(CLIENT_DIST));
@@ -520,7 +549,8 @@ app.use((err, req, res, _next) => {
 
 /* ---------------------------------------------------------------- startup */
 
-if (process.env.NODE_ENV !== 'test') {
+// A serverless host invokes the exported handler itself; there is no port to bind.
+if (process.env.NODE_ENV !== 'test' && !SERVERLESS) {
   app.listen(PORT, () => {
     console.log(`\n  TaskChaser server  →  http://localhost:${PORT}`);
     console.log(`  Response links use →  ${process.env.PUBLIC_BASE_URL ?? `http://localhost:${PORT}`}`);

@@ -1,4 +1,6 @@
-import type { EmailDraft, Member, Snapshot, Task, User } from './types';
+import type { EmailDraft, Member, Snapshot, StorageInfo, Task, User } from './types';
+
+type Bootstrap = { user: User; storage: StorageInfo } & Snapshot;
 
 const SESSION_KEY = 'taskchaser.userId';
 
@@ -40,9 +42,9 @@ const body = (data: unknown) => JSON.stringify(data);
 
 export const api = {
   signIn: (input: { fullName: string; title: string; email: string }) =>
-    request<{ user: User } & Snapshot>('/session', { method: 'POST', body: body(input) }),
+    request<Bootstrap>('/session', { method: 'POST', body: body(input) }),
 
-  bootstrap: () => request<{ user: User } & Snapshot>('/bootstrap'),
+  bootstrap: () => request<Bootstrap>('/bootstrap'),
 
   addMember: (input: { name: string; email: string; role: string }) =>
     request<Member>('/members', { method: 'POST', body: body(input) }),

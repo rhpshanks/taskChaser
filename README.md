@@ -46,6 +46,36 @@ both `/api` and `/r`, so the whole email round trip works against `http://localh
 
 ---
 
+## Deploying to Vercel
+
+The repo carries `vercel.json` and `api/index.js`, so Vercel builds the dashboard to its CDN and
+runs the API and the email-link pages as one function. Import the repo and it deploys with no
+settings to fill in.
+
+`PUBLIC_BASE_URL` is optional there: the server uses your project's production domain automatically,
+which matters because links sitting in someone's inbox must keep working after your next push.
+
+### Read this before you rely on a Vercel deployment
+
+**Vercel cannot store your data.** Its filesystem is read-only apart from `/tmp`, and that `/tmp`
+belongs to a single instance that is wiped when it recycles. TaskChaser falls back to `/tmp` so the
+app still boots and can be clicked through, and it shows a warning banner saying exactly this. Tasks,
+team members and replies will disappear, usually within minutes to hours.
+
+So Vercel is fine for showing the thing to someone. It is not somewhere to run your actual work yet.
+Two ways forward:
+
+| Option | What it takes |
+| --- | --- |
+| Stay on Vercel | Add a database (Vercel Postgres / Neon / Upstash) and swap `server/src/store.js` for it. The store is one small module behind a `get data` / `save` interface, so this is a contained change. |
+| Move to a host with a disk | Render, Railway or Fly run the Express server as-is with a persistent volume. Point `DATA_DIR` at the volume and nothing else changes. |
+
+Live updates degrade gracefully on serverless: the SSE stream is cut off at the function timeout and
+a reply handled by one instance never reaches a dashboard held open by another, so the client also
+polls every 8 seconds. Updates arrive either way, just a few seconds later rather than instantly.
+
+---
+
 ## Making the email links work for other people
 
 This is the one bit of setup that matters.
@@ -59,7 +89,8 @@ Set `PUBLIC_BASE_URL` to an address they can actually reach:
 | Situation | Value to use |
 | --- | --- |
 | Testing on your own machine | `http://localhost:4000` (the default) |
-| Team on the same office network | `http://192.168.1.20:4000` — your machine's LAN IP |
+| Team on the same office network | `http://192.168.1.20:4000`, your machine's LAN IP |
+| Deployed on Vercel | Nothing to set, the production domain is detected |
 | Anywhere else | The public HTTPS URL where you host this |
 
 ```bash
@@ -130,6 +161,8 @@ change their answer if they hit the wrong one. Both show up on your board.
 
 ```
 taskchaser/
+├── vercel.json           Build, routing and function config for Vercel
+├── api/index.js          Serverless entry: re-exports the Express app
 ├── server/               Express API + the pages the email links land on
 │   └── src/
 │       ├── index.js      Routes, auth, SSE broadcast
