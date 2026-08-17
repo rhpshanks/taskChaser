@@ -143,11 +143,18 @@ export function App() {
           <div className="spacer" />
           <span
             className={`live ${connected ? 'on' : 'off'}`}
-            title={
+            title={[
               connected
                 ? 'Connected. Replies from your team appear here without a refresh.'
-                : 'Reconnecting to the server...'
-            }
+                : 'Stream is down, still checking every few seconds.',
+              storage?.backend === 'instant'
+                ? 'Storage: InstantDB'
+                : storage
+                  ? `Storage: local file${storage.durable ? '' : ' (temporary)'}`
+                  : '',
+            ]
+              .filter(Boolean)
+              .join('\n')}
           >
             <span className="dot" />
             {connected ? 'Live' : 'Offline'}

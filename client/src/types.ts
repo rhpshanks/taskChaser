@@ -57,6 +57,8 @@ export interface ActivityEvent {
 /** Whether the server it is talking to can actually keep the data. */
 export interface StorageInfo {
   durable: boolean;
+  /** 'instant' when backed by InstantDB, 'file' for the local JSON store. */
+  backend?: string;
   dir: string;
 }
 

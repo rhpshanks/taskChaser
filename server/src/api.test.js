@@ -236,8 +236,9 @@ test('one workspace never sees another workspace', async () => {
 });
 
 test('data survives a restart', async () => {
-  const { store } = await import('./index.js');
-  store.flushNow();
+  const { db } = await import('./index.js');
+  assert.equal(db.kind, 'file', 'the suite must run against the file store, not a live database');
+  db.flushNow();
   const onDisk = JSON.parse(fs.readFileSync(path.join(tmpDir, 'taskchaser.json'), 'utf8'));
   assert.ok(onDisk.tasks.some((t) => t.id === taskId));
   assert.ok(onDisk.users.length >= 2);

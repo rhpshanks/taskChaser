@@ -46,6 +46,51 @@ both `/api` and `/r`, so the whole email round trip works against `http://localh
 
 ---
 
+## Storage
+
+TaskChaser talks to storage through a small adapter, and picks one at startup:
+
+| When | Backend | Durable |
+| --- | --- | --- |
+| `INSTANT_APP_ID` and `INSTANT_ADMIN_TOKEN` are set | InstantDB | Yes |
+| Neither is set, running normally | `server/data/taskchaser.json` | Yes |
+| Neither is set, running serverless | `/tmp`, wiped on recycle | **No**, the app says so in a banner |
+
+The dashboard's **Live** pill names the active backend in its tooltip, so you can
+always tell which one you are on.
+
+### Using InstantDB
+
+Set the two variables, locally in `.env` or on your host:
+
+```bash
+INSTANT_APP_ID=your-app-id
+INSTANT_ADMIN_TOKEN=your-admin-token
+```
+
+The App ID is public and safe to share. **The admin token is a secret**: it grants full read and
+write over the whole app. Keep it out of version control, and rotate it in the Instant dashboard if
+it ever leaks.
+
+The app writes to four namespaces: `owners`, `members`, `tasks` and `events`. It is called `owners`
+rather than `users` to keep it clearly apart from Instant's own `$users`, which belongs to Instant's
+auth and is not used here.
+
+Instant accepts writes without a schema, so this runs as-is. Pushing the included schema is still
+worth it: it indexes the fields every request filters on (looking a task up by its `responseToken`
+happens on every tap of an email link) and makes `owners.email` unique, so two simultaneous sign-ins
+with one address cannot produce two workspaces.
+
+```bash
+npx instant-cli@latest push schema
+```
+
+Instant does not replace the API. The server stays in front of it with the admin SDK, because
+sign-in here is identity-only by design and letting the browser hold database credentials would let
+anyone read every workspace.
+
+---
+
 ## Deploying to Vercel
 
 The repo carries `vercel.json` and `api/index.js`, so Vercel builds the dashboard to its CDN and
@@ -55,20 +100,18 @@ settings to fill in.
 `PUBLIC_BASE_URL` is optional there: the server uses your project's production domain automatically,
 which matters because links sitting in someone's inbox must keep working after your next push.
 
-### Read this before you rely on a Vercel deployment
+### Set the storage variables, or the data will not survive
 
-**Vercel cannot store your data.** Its filesystem is read-only apart from `/tmp`, and that `/tmp`
-belongs to a single instance that is wiped when it recycles. TaskChaser falls back to `/tmp` so the
-app still boots and can be clicked through, and it shows a warning banner saying exactly this. Tasks,
-team members and replies will disappear, usually within minutes to hours.
+Vercel's filesystem is read-only apart from `/tmp`, and that `/tmp` belongs to one instance that is
+wiped when it recycles. Add both Instant variables in **Project Settings → Environment Variables**:
 
-So Vercel is fine for showing the thing to someone. It is not somewhere to run your actual work yet.
-Two ways forward:
+```
+INSTANT_APP_ID       = your-app-id
+INSTANT_ADMIN_TOKEN  = your-admin-token
+```
 
-| Option | What it takes |
-| --- | --- |
-| Stay on Vercel | Add a database (Vercel Postgres / Neon / Upstash) and swap `server/src/store.js` for it. The store is one small module behind a `get data` / `save` interface, so this is a contained change. |
-| Move to a host with a disk | Render, Railway or Fly run the Express server as-is with a persistent volume. Point `DATA_DIR` at the volume and nothing else changes. |
+Without them the app still boots and can be clicked through, but it stores everything in `/tmp` and
+shows a banner telling you the data will disappear.
 
 Live updates degrade gracefully on serverless: the SSE stream is cut off at the function timeout and
 a reply handled by one instance never reaches a dashboard held open by another, so the client also
@@ -162,10 +205,12 @@ change their answer if they hit the wrong one. Both show up on your board.
 ```
 taskchaser/
 ├── vercel.json           Build, routing and function config for Vercel
+├── instant.schema.ts     InstantDB schema: indexes and uniqueness
 ├── api/index.js          Serverless entry: re-exports the Express app
 ├── server/               Express API + the pages the email links land on
 │   └── src/
 │       ├── index.js      Routes, auth, SSE broadcast
+│       ├── db/           Storage adapters: picks InstantDB or the JSON file
 │       ├── domain.js     Statuses and the three response actions
 │       ├── email.js      Builds the mailto: draft
 │       ├── pages.js      Standalone HTML for the response pages
@@ -193,8 +238,11 @@ npm test
 ```
 
 28 tests: the date parser against every phrase in the table above, and the server driven end to end
-— sign in, add a member, create and assign a task, send the email, tap a response link, and confirm
-the dashboard reflects it.
+(sign in, add a member, create and assign a task, send the email, tap a response link, and confirm
+the dashboard reflects it).
+
+The suite always runs against the JSON file store and never reaches a live database, even if Instant
+credentials happen to be set in your environment.
 
 ---
 
