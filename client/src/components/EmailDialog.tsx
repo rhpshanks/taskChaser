@@ -4,9 +4,13 @@ import type { EmailDraft } from '../types';
 import { IconCopy, IconMail, Modal } from './ui';
 
 /**
- * Shown straight after the mail client has been handed the draft. `mailto:`
- * gives no success signal back, so the preview doubles as the fallback: if
- * Outlook did not come up, the whole message can be copied out of here.
+ * Shown straight after the mail client has been handed the draft.
+ *
+ * `mailto:` reports nothing back, so there is no way to know whether the mail
+ * app actually came up. This dialog is therefore both the confirmation and the
+ * recovery path: a real anchor the user can click (which carries proper user
+ * activation, unlike the automatic attempt made after an awaited API call), and
+ * the full text to copy if no mail app is registered at all.
  */
 export function EmailDialog({ draft, onClose }: { draft: EmailDraft; onClose: () => void }) {
   const [copied, setCopied] = useState(false);
@@ -24,8 +28,8 @@ export function EmailDialog({ draft, onClose }: { draft: EmailDraft; onClose: ()
 
   return (
     <Modal
-      title="Outlook should be opening"
-      subtitle="The message is already written. Send it as it is, or edit it first."
+      title="Your email is ready"
+      subtitle="Your mail app should have opened with this already written. If it did not, use the button below."
       onClose={onClose}
       footer={
         <>
@@ -33,11 +37,13 @@ export function EmailDialog({ draft, onClose }: { draft: EmailDraft; onClose: ()
             <IconCopy />
             {copied ? 'Copied' : 'Copy email text'}
           </button>
-          <a className="btn" href={draft.mailto}>
+          {/* A genuine click here carries user activation, so this is the most
+              dependable way to reach the mail app. */}
+          <a className="btn btn-primary" href={draft.mailto}>
             <IconMail />
-            Open again
+            Open mail app
           </a>
-          <button className="btn btn-primary" onClick={onClose}>
+          <button className="btn" onClick={onClose}>
             Done
           </button>
         </>
@@ -59,8 +65,8 @@ export function EmailDialog({ draft, onClose }: { draft: EmailDraft; onClose: ()
       </div>
 
       <p className="hint">
-        Nothing happened? Windows needs Outlook set as the default mail app. Use <b>Copy email text</b> in the
-        meantime.
+        Nothing opened? Windows needs a default mail app set under <b>Settings → Apps → Default apps</b>. Until then,
+        <b> Copy email text</b> gets you the whole message.
       </p>
     </Modal>
   );

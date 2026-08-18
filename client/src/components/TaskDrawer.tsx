@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 
 import { useStore } from '../store';
 import { PRIORITY_LABEL, formatDue, fromLocalInput, isOverdue, timeAgo, toLocalInput } from '../lib/format';
+import { openMailClient } from '../lib/openMail';
 import type { EmailDraft, Priority, Task } from '../types';
 import { IconAlert, IconMail, IconTrash, IconX, StatusBadge } from './ui';
 
@@ -45,7 +46,7 @@ export function TaskDrawer({
     setBusy(true);
     try {
       const draft = await informByEmail(task.id);
-      window.location.href = draft.mailto;
+      openMailClient(draft.mailto);
       onDraft(draft);
     } catch {
       /* reported by the store */

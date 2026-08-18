@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 
 import { useStore } from '../store';
 import { parseTaskInput } from '../lib/parseTask';
+import { openMailClient } from '../lib/openMail';
 import { PRIORITY_LABEL, formatDue, isOverdue, timeAgo } from '../lib/format';
 import type { EmailDraft, Member, Task, TaskStatus } from '../types';
 import { Avatar, EmptyState, IconAlert, IconCheck, IconMail, IconPlus, IconSearch, StatusBadge } from './ui';
@@ -71,7 +72,7 @@ function Composer({ members, onDraft }: { members: Member[]; onDraft: (draft: Em
 
       if (thenInform && assigneeId) {
         const draft = await informByEmail(task.id);
-        window.location.href = draft.mailto;
+        openMailClient(draft.mailto);
         onDraft(draft);
       }
     } catch {
@@ -168,7 +169,7 @@ function TaskRow({
     setBusy(true);
     try {
       const draft = await informByEmail(task.id);
-      window.location.href = draft.mailto;
+      openMailClient(draft.mailto);
       onDraft(draft);
     } catch {
       /* reported by the store */
