@@ -1394,6 +1394,14 @@ a {
   padding: 22px;
 }
 
+/* Inside .modal the scrim and the card are siblings in the modal's own
+   stacking context, so the shared z-index of 60 would paint the backdrop
+   over the card and swallow every click. The drawer keeps using 60,
+   where the scrim really is behind its panel. */
+.modal .scrim {
+  z-index: 0;
+}
+
 .modal-card {
   position: relative;
   z-index: 1;
